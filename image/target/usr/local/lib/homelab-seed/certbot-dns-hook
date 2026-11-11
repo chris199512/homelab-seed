@@ -1,0 +1,30 @@
+#!/bin/bash
+# certbot manual hook for the DNS-01 challenge: certbot-dns-hook <auth|cleanup>
+# Dispatches to the provider configured in /etc/homelab-seed/dns.env.
+set -Eeuo pipefail
+
+# shellcheck source=image/common/usr/local/lib/homelab-seed/common.sh
+. /usr/local/lib/homelab-seed/common.sh
+# shellcheck source=/dev/null
+. "$SEED_ETC/dns.env"
+
+provider=$SEED_LIB/dns/$ACME_DNS_PROVIDER.sh
+[[ -f $provider ]] || die "Unknown DNS provider '$ACME_DNS_PROVIDER'"
+# shellcheck source=image/target/usr/local/lib/homelab-seed/dns/mittwald.sh
+. "$provider"
+
+: "${CERTBOT_DOMAIN:?must be called by certbot}"
+
+case ${1:-} in
+    auth)
+        log "Setting TXT record for _acme-challenge.$CERTBOT_DOMAIN"
+        dns_set_txt "$CERTBOT_DOMAIN" "$CERTBOT_VALIDATION"
+        log "Waiting ${ACME_DNS_PROPAGATION_SECONDS:-60}s for DNS propagation"
+        sleep "${ACME_DNS_PROPAGATION_SECONDS:-60}"
+        ;;
+    cleanup)
+        log "Removing TXT record for _acme-challenge.$CERTBOT_DOMAIN"
+        dns_clear_txt "$CERTBOT_DOMAIN"
+        ;;
+    *) die "Usage: $0 <auth|cleanup>" ;;
+esac

@@ -1,0 +1,4 @@
+# Everything that ends up on the Pi must have Unix line endings.
+* text=auto eol=lf
+*.img binary
+*.xz binary

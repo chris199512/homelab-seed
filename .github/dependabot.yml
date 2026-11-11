@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Actions used by the workflows and by action.yml
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Base image of the builder container
+  - package-ecosystem: docker
+    directory: /builder
+    schedule:
+      interval: weekly

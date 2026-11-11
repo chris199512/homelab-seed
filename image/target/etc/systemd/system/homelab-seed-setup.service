@@ -1,0 +1,20 @@
+[Unit]
+Description=homelab-seed first-boot setup
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/homelab-seed/config.env
+# Give up after 10 failed attempts within 2 hours; the next boot tries again.
+StartLimitIntervalSec=2h
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-seed-setup
+Restart=on-failure
+RestartSec=60
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

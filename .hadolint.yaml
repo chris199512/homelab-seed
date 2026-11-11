@@ -1,0 +1,5 @@
+# hadolint settings for builder/Dockerfile
+ignored:
+  # Pinning Debian package versions breaks the build whenever Debian ships a
+  # security update; the base image tag is pinned instead.
+  - DL3008

@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ACTIONLINT_VERSION: "1.7.4"
+  HADOLINT_IMAGE: hadolint/hadolint:v2.12.0
+  PSSCRIPTANALYZER_VERSION: "1.23.0"
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        run: |
+          mapfile -t files < <(git ls-files | xargs grep -lE '^#!/(usr/)?bin/(env )?(ba)?sh|^# shellcheck shell=bash')
+          printf '%s\n' "${files[@]}"
+          shellcheck --version
+          shellcheck --external-sources "${files[@]}"
+
+  actionlint:
+    name: Workflows (actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install actionlint
+        run: |
+          base=https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION
+          archive=actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "$base/$archive"
+          curl -fsSLO "$base/actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          sha256sum --check --ignore-missing "actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          tar -xzf "$archive" actionlint
+
+      # Also runs ShellCheck on the run: blocks of the workflows.
+      - name: Run actionlint
+        run: '"$RUNNER_TEMP/actionlint" -color'
+
+  hadolint:
+    name: Dockerfile (hadolint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run hadolint
+        run: |
+          docker run --rm -i \
+            -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" \
+            "$HADOLINT_IMAGE" <builder/Dockerfile
+
+  powershell:
+    name: PowerShell (PSScriptAnalyzer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSCRIPTANALYZER_VERSION -Scope CurrentUser -Force
+          $results = Invoke-ScriptAnalyzer -Path ./build.ps1 -Settings ./PSScriptAnalyzerSettings.psd1
+          $results | Format-Table -AutoSize -Wrap
+          if ($results) { exit 1 }
+
+  windows-powershell:
+    name: Windows PowerShell 5.1 syntax
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse build.ps1
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\build.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error "$($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+          Get-Help .\build.ps1 | Select-Object -ExpandProperty Synopsis
+
+  tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: bash tests/run-tests.sh
+
+  # Full image build with a throwaway config, along the same path users take
+  # (config bundle -> action). Takes a while, so it only runs on demand.
+  # The image is not uploaded.
+  build:
+    name: Test build
+    if: github.event_name == 'workflow_dispatch'
+    needs: [shellcheck, actionlint, hadolint, tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create test configuration
+        run: |
+          mkdir -p secrets
+          ssh-keygen -q -t ed25519 -N '' -f secrets/ci_key
+          cp secrets/ci_key.pub secrets/authorized_keys
+          printf 'ADMIN_PASSWORD="ci-only"\nSEMAPHORE_ADMIN_PASSWORD="ci-only"\n' >config.env
+
+      - name: Create and unpack a config bundle
+        run: |
+          bash build.sh --bundle --output "$RUNNER_TEMP/bundle"
+          mkdir -p "$RUNNER_TEMP/seed-config"
+          base64 -d "$RUNNER_TEMP/bundle/config.bundle.b64" | tar -xz -C "$RUNNER_TEMP/seed-config"
+
+      - name: Build image
+        id: seed
+        uses: ./
+        with:
+          config: ${{ runner.temp }}/seed-config/config.env
+          output: ${{ runner.temp }}/out
+
+      - name: Show result
+        env:
+          CHECKSUM: ${{ steps.seed.outputs.checksum }}
+        run: ls -lh "$RUNNER_TEMP/out" && cat "$CHECKSUM"

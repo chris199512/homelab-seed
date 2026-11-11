@@ -1,0 +1,11 @@
+# Your configuration and secrets – never commit these
+config.env
+*.env
+!config.example.env
+secrets/
+
+# Build output
+build/
+out/
+*.img
+*.img.xz

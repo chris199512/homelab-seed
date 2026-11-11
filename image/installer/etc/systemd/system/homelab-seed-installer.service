@@ -1,0 +1,14 @@
+[Unit]
+Description=homelab-seed installer: write the system image to the target disk
+After=local-fs.target systemd-udevd.service
+ConditionPathExists=/var/lib/homelab-seed/os.img
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-seed-installer
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

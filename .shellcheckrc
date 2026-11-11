@@ -1,0 +1,4 @@
+# Run shellcheck from the repository root: source= directives are relative to it.
+external-sources=true
+# Settings come from config.env, which shellcheck cannot see.
+disable=SC2154

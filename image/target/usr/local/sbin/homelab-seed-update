@@ -1,0 +1,54 @@
+#!/bin/bash
+# Updates a managed container to a given or the latest version.
+#
+#   homelab-seed-update <semaphore|nginx> [version]
+#
+# The new image is pulled before the old container is removed. If the new
+# container does not start, the previous image is started again.
+set -Eeuo pipefail
+
+# shellcheck source=image/common/usr/local/lib/homelab-seed/common.sh
+. /usr/local/lib/homelab-seed/common.sh
+# shellcheck source=image/target/usr/local/lib/homelab-seed/containers.sh
+. "$SEED_LIB/containers.sh"
+
+usage() {
+    echo "Usage: $(basename "$0") <semaphore|nginx> [version]" >&2
+    exit 2
+}
+
+# Latest stable tag on Docker Hub.
+latest_version() {
+    local repo pattern
+    case $1 in
+        semaphore) repo=semaphoreui/semaphore pattern='^v[0-9]+\.[0-9]+\.[0-9]+$' ;;
+        nginx) repo=library/nginx pattern='^[0-9]+\.[0-9]+\.[0-9]+$' ;;
+    esac
+    curl -fsS "https://hub.docker.com/v2/repositories/$repo/tags?page_size=100" |
+        jq -r '.results[].name' | grep -E "$pattern" | sort -V | tail -n1
+}
+
+main() {
+    local service=${1:-} version=${2:-} key current
+    [[ $service == semaphore || $service == nginx ]] || usage
+    [[ $EUID -eq 0 ]] || die "Run as root (sudo)"
+    [[ -f $RUNTIME_ENV ]] || die "$RUNTIME_ENV not found – has the setup finished?"
+    load_runtime_env
+
+    key=$(container_version_key "$service")
+    current=${!key:-}
+    if [[ -z $version ]]; then
+        version=$(latest_version "$service") || true
+        [[ -n $version ]] || die "Could not determine the latest version"
+    fi
+    log "$service: installed ${current:-unknown}, requested $version"
+
+    if [[ $version == "$current" ]] && container_running "$(container_name "$service")"; then
+        log "Already up to date"
+        exit 0
+    fi
+    deploy_container "$service" "$version"
+    log "$service now runs $version"
+}
+
+main "$@"

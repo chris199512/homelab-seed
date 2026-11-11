@@ -1,0 +1,92 @@
+#!/bin/bash
+# Writes the bundled system image to TARGET_DEVICE, verifies it and reboots
+# (run by homelab-seed-installer.service on the installer stick).
+set -Eeuo pipefail
+
+# shellcheck source=image/common/usr/local/lib/homelab-seed/common.sh
+. /usr/local/lib/homelab-seed/common.sh
+# shellcheck source=/dev/null
+. "$SEED_ETC/installer.env"
+
+IMAGE=$SEED_STATE/os.img
+
+# Disk that holds the running system, e.g. "sda".
+root_disk() {
+    lsblk -no PKNAME "$(findmnt -no SOURCE /)" | head -n1
+}
+
+# Whether the target already contains a homelab-seed system.
+already_installed() {
+    local part mnt rc=1
+    part=$(part_dev "$1" 2)
+    [[ -b $part ]] || return 1
+    mnt=$(mktemp -d)
+    if mount -t ext4 -o ro,noload "$part" "$mnt" 2>/dev/null; then
+        [[ ! -f $mnt/etc/homelab-seed/release ]] || rc=0
+        umount "$mnt"
+    fi
+    rmdir "$mnt"
+    return "$rc"
+}
+
+unmount_target() {
+    local mountpoint
+    while read -r mountpoint; do
+        [[ -z $mountpoint ]] || umount "$mountpoint"
+    done < <(lsblk -nrpo MOUNTPOINT "$1")
+}
+
+write_image() {
+    local target=$1 size
+    size=$(stat -c %s "$IMAGE")
+    log "Writing the system image to $target ($((size / 1048576)) MiB)..."
+    dd if="$IMAGE" of="$target" bs=4M conv=fsync status=progress
+    blockdev --flushbufs "$target"
+    echo 3 >/proc/sys/vm/drop_caches
+
+    log "Verifying..."
+    if ! cmp -n "$size" "$IMAGE" "$target"; then
+        warn "Verification failed"
+        return 1
+    fi
+    blockdev --rereadpt "$target" 2>/dev/null || true
+}
+
+main() {
+    local target
+    banner "homelab-seed installer"
+    [[ -f $IMAGE ]] || die "System image $IMAGE is missing"
+
+    log "Waiting for target device $TARGET_DEVICE..."
+    wait_until 120 2 test -b "$TARGET_DEVICE" ||
+        die "Target device $TARGET_DEVICE not found. Is the SD card inserted?"
+    target=$(readlink -f "$TARGET_DEVICE")
+
+    [[ $(lsblk -dno TYPE "$target") == disk ]] || die "$target is not a whole disk"
+    [[ $(basename "$target") != "$(root_disk)" ]] ||
+        die "$target holds the running installer – refusing to overwrite it. Check TARGET_DEVICE."
+    (($(blockdev --getsize64 "$target") >= $(stat -c %s "$IMAGE"))) ||
+        die "$target is smaller than the system image"
+
+    if already_installed "$target"; then
+        if [[ $INSTALLER_IF_INSTALLED != overwrite ]]; then
+            banner "$target already contains a homelab-seed system – nothing to do"
+            log "Remove the USB stick and reboot, or rebuild with INSTALLER_IF_INSTALLED=overwrite."
+            exit 0
+        fi
+        log "$target already contains a homelab-seed system – overwriting it"
+    fi
+
+    unmount_target "$target"
+    if ! write_image "$target"; then
+        log "Retrying once..."
+        write_image "$target" || die "Writing the image to $target failed twice. Try another SD card."
+    fi
+
+    banner "Installation finished – ${INSTALLER_AFTER_INSTALL} in 10 seconds"
+    log "The system configures itself on its first boot. Follow it with: journalctl -fu homelab-seed-setup"
+    sleep 10
+    systemctl "$INSTALLER_AFTER_INSTALL"
+}
+
+main "$@"

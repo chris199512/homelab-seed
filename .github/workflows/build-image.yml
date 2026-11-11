@@ -1,0 +1,119 @@
+# Builds your image in GitHub Actions. Use it in a PRIVATE copy of this
+# repository (see README, "Building in GitHub Actions"). Configuration, either:
+#
+#   Secret SEED_CONFIG_BUNDLE    output of `./build.sh --bundle` / `.\build.ps1 -Bundle`
+#
+# or, without Docker on your computer, the files as individual secrets:
+#   Secret SEED_CONFIG           content of config.env
+#   Secret SEED_AUTHORIZED_KEYS  SSH public key(s) for the admin user
+#   Secret SEED_SSH_PRIVATE_KEY  optional, for BOOTSTRAP_SSH_PRIVATE_KEY_FILE
+#   Secret SEED_SECRETS_ENV      optional, for BOOTSTRAP_SECRETS_FILE
+#   Hooks (not secret) can be committed to hooks/*.sh in your copy.
+#
+#   For the WebDAV upload (e.g. Nextcloud) additionally:
+#   Secret SEED_WEBDAV_URL       target folder, e.g. https://cloud.example.com/remote.php/dav/files/me/images
+#   Secret SEED_WEBDAV_USER
+#   Secret SEED_WEBDAV_PASSWORD  (an app password)
+name: Build image
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: Where to put the image
+        type: choice
+        options: [artifact, webdav]
+        default: artifact
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      # Artifacts of public repositories can be downloaded by anyone, and the
+      # image contains your secrets.
+      - name: Refuse to run in a public repository
+        if: ${{ !github.event.repository.private }}
+        run: |
+          echo "::error::This repository is public. Run this workflow only in a private copy (see README)."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Restore configuration
+        env:
+          SEED_CONFIG_BUNDLE: ${{ secrets.SEED_CONFIG_BUNDLE }}
+          SEED_CONFIG: ${{ secrets.SEED_CONFIG }}
+          SEED_AUTHORIZED_KEYS: ${{ secrets.SEED_AUTHORIZED_KEYS }}
+          SEED_SSH_PRIVATE_KEY: ${{ secrets.SEED_SSH_PRIVATE_KEY }}
+          SEED_SECRETS_ENV: ${{ secrets.SEED_SECRETS_ENV }}
+        run: |
+          dir=$RUNNER_TEMP/seed-config
+          mkdir -p "$dir"
+          umask 077
+
+          if [[ -n $SEED_CONFIG_BUNDLE ]]; then
+            echo "Using SEED_CONFIG_BUNDLE"
+            base64 -d <<<"$SEED_CONFIG_BUNDLE" | tar -xz -C "$dir"
+            exit 0
+          fi
+          if [[ -z $SEED_CONFIG ]]; then
+            echo "::error::Neither SEED_CONFIG_BUNDLE nor SEED_CONFIG is set (see README)."
+            exit 1
+          fi
+
+          echo "Using individual secrets"
+          printf '%s\n' "$SEED_CONFIG" >"$dir/config.env"
+          # Point the file settings to the files created from the secrets.
+          add_file() { # <setting> <file> <content>
+            [[ -n $3 ]] || return 0
+            printf '%s\n' "$3" >"$dir/$2"
+            printf '\n%s=./%s\n' "$1" "$2" >>"$dir/config.env"
+          }
+          add_file ADMIN_AUTHORIZED_KEYS_FILE authorized_keys "$SEED_AUTHORIZED_KEYS"
+          add_file BOOTSTRAP_SSH_PRIVATE_KEY_FILE ssh_key "$SEED_SSH_PRIVATE_KEY"
+          add_file BOOTSTRAP_SECRETS_FILE secrets.env "$SEED_SECRETS_ENV"
+          if compgen -G "hooks/*.sh" >/dev/null; then
+            cp -r hooks "$dir/hooks"
+            printf '\nHOOKS_DIR=./hooks\n' >>"$dir/config.env"
+          fi
+
+      - name: Build
+        id: seed
+        uses: ./
+        with:
+          config: ${{ runner.temp }}/seed-config/config.env
+          output: ${{ runner.temp }}/out
+
+      - name: Upload as workflow artifact
+        if: inputs.upload == 'artifact'
+        uses: actions/upload-artifact@v4
+        with:
+          name: homelab-seed-image
+          path: |
+            ${{ steps.seed.outputs.image }}
+            ${{ steps.seed.outputs.checksum }}
+          compression-level: 0
+          retention-days: 3
+
+      - name: Upload via WebDAV
+        if: inputs.upload == 'webdav'
+        env:
+          URL: ${{ secrets.SEED_WEBDAV_URL }}
+          USER: ${{ secrets.SEED_WEBDAV_USER }}
+          PASSWORD: ${{ secrets.SEED_WEBDAV_PASSWORD }}
+          IMAGE: ${{ steps.seed.outputs.image }}
+          CHECKSUM: ${{ steps.seed.outputs.checksum }}
+        run: |
+          if [[ -z $URL ]]; then
+            echo "::error::Secret SEED_WEBDAV_URL is missing"
+            exit 1
+          fi
+          for file in "$IMAGE" "$CHECKSUM"; do
+            echo "Uploading $(basename "$file")"
+            curl --fail --silent --show-error --retry 3 -u "$USER:$PASSWORD" \
+              -T "$file" "${URL%/}/$(basename "$file")"
+          done

@@ -1,0 +1,88 @@
+#!/bin/bash
+# First-boot setup of the installed system (run by homelab-seed-setup.service).
+# Every step runs once. If a step fails, systemd restarts the service and the
+# setup continues with the failed step.
+set -Eeuo pipefail
+
+# shellcheck source=image/common/usr/local/lib/homelab-seed/common.sh
+. /usr/local/lib/homelab-seed/common.sh
+# shellcheck source=/dev/null
+. "$SEED_ETC/config.env"
+# shellcheck source=image/target/usr/local/lib/homelab-seed/containers.sh
+. "$SEED_LIB/containers.sh"
+for file in "$SEED_LIB"/setup.d/*.sh; do
+    # shellcheck source=/dev/null
+    . "$file"
+done
+
+STEP_DIR=$SEED_STATE/steps
+
+trap 'warn "Setup failed in line $LINENO – systemd will retry. Logs: journalctl -u homelab-seed-setup"' ERR
+
+# run_step <name> [command...]: runs the command (default: step_<name>) once.
+run_step() {
+    local name=$1
+    shift
+    (($#)) || set -- "step_$name"
+    if [[ -f $STEP_DIR/$name ]]; then
+        log "Step '$name' already done"
+        return
+    fi
+    banner "Step: $name"
+    "$@"
+    touch "$STEP_DIR/$name"
+}
+
+time_synced() {
+    [[ $(timedatectl show -p NTPSynchronized --value 2>/dev/null) == yes ]]
+}
+
+online() {
+    curl -fsS -o /dev/null --max-time 10 https://deb.debian.org/
+}
+
+# The Pi has no real-time clock: apt and TLS fail until the clock is synced.
+wait_for_network() {
+    log "Waiting for internet access..."
+    wait_until 600 5 online || die "No internet access"
+    log "Waiting for time synchronisation..."
+    wait_until 300 5 time_synced || warn "Clock not synchronised yet, continuing anyway"
+}
+
+step_finish() {
+    log "Removing the setup configuration (secrets) from disk"
+    find "$SEED_ETC/files" "$SEED_ETC/hooks" -type f -exec shred -u {} + 2>/dev/null || true
+    rm -rf "$SEED_ETC/files" "$SEED_ETC/hooks"
+    shred -u "$SEED_ETC/config.env"
+    systemctl disable homelab-seed-setup.service
+}
+
+main() {
+    banner "homelab-seed setup"
+    mkdir -p "$STEP_DIR"
+    wait_for_network
+
+    run_step system
+    if is_true "$UNATTENDED_UPGRADES"; then run_step unattended_upgrades; fi
+    if is_true "$DOCKER_ENABLED"; then
+        run_step docker
+        run_step runtime_config
+    fi
+    if is_true "$SEMAPHORE_ENABLED"; then run_step semaphore; fi
+    if is_true "$PROXY_ENABLED"; then run_step proxy; fi
+    if [[ $TLS_MODE != none ]]; then run_step certificate; fi
+    if is_true "$BOOTSTRAP_ENABLED"; then run_step semaphore_bootstrap; fi
+    run_hooks
+    # Last, so a mistake in the rules cannot interrupt the setup.
+    if is_true "$FIREWALL_ENABLED"; then run_step firewall; fi
+    run_step finish
+
+    if is_true "$SETUP_REBOOT_WHEN_DONE"; then
+        banner "Setup complete – rebooting"
+        systemctl reboot
+    else
+        banner "Setup complete"
+    fi
+}
+
+main "$@"
