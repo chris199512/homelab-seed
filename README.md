@@ -300,7 +300,7 @@ jobs:
           BUNDLE: ${{ secrets.SEED_CONFIG_BUNDLE }}
 
       - id: seed
-        uses: chris199512/homelab-seed@main   # pin a release tag once available
+        uses: chris199512/homelab-seed@v1   # newest tested 1.x release
         with:
           config: ${{ runner.temp }}/seed/config.env
           output: ${{ runner.temp }}/out
@@ -384,8 +384,23 @@ Every push and pull request runs:
 | `build.ps1` (incl. Windows PowerShell 5.1 compatibility) | PSScriptAnalyzer, Windows PowerShell parser |
 | Configuration validation, staging, bundles, proxy config, hooks, workflow logic | `tests/run-tests.sh` |
 
-The full image build (*Actions → CI → Run workflow*) is started manually.
-Dependabot keeps the actions and the builder's base image up to date.
+The full image build runs for every release and can be started manually
+(*Actions → CI → Run workflow*). Dependabot keeps the actions and the
+builder's base image up to date.
+
+### Releases
+
+Versions follow [Semantic Versioning](https://semver.org) with tags like
+`v1.2.3`. To release, create a GitHub release with a new tag (*Releases →
+Draft a new release*, "Generate release notes" fills in the changes). The
+release workflow then
+
+1. runs the complete CI including the full image build, and
+2. if that succeeds, moves the major tag (`v1`) to the new release.
+
+Users of `chris199512/homelab-seed@v1` therefore only get releases whose build
+succeeded. Mark a release as *pre-release* (e.g. `v1.3.0-rc.1`) to test it
+without moving `v1`. A breaking change gets a new major version (`v2`).
 
 Locally, run `bash tests/run-tests.sh` and `shellcheck --external-sources`
 from the repository root. Optionally install the

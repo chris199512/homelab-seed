@@ -1,0 +1,57 @@
+# Runs for every published release (tag vMAJOR.MINOR.PATCH):
+#   1. the complete CI including the full image build
+#   2. if that succeeds, moves the major tag (e.g. v1) to this release, so
+#      `uses: chris199512/homelab-seed@v1` gets the newest working version.
+# Pre-releases are tested but do not move the major tag.
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  check-tag:
+    name: Check tag
+    runs-on: ubuntu-latest
+    outputs:
+      major: ${{ steps.tag.outputs.major }}
+    steps:
+      - name: Tag must look like v1.2.3
+        id: tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ ! $TAG =~ ^v([0-9]+)\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tags must look like v1.2.3 or v1.2.3-rc.1 (got '$TAG')"
+            exit 1
+          fi
+          echo "major=v${BASH_REMATCH[1]}" >>"$GITHUB_OUTPUT"
+
+  ci:
+    name: CI
+    needs: check-tag
+    uses: ./.github/workflows/ci.yml
+    with:
+      test-build: true
+
+  major-tag:
+    name: Move ${{ needs.check-tag.outputs.major }} tag
+    needs: [check-tag, ci]
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Point ${{ needs.check-tag.outputs.major }} to ${{ github.event.release.tag_name }}
+        env:
+          MAJOR: ${{ needs.check-tag.outputs.major }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git tag --force "$MAJOR" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$MAJOR"
+          echo "$MAJOR now points to $TAG ($GITHUB_SHA)"

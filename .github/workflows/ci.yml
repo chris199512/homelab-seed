@@ -2,8 +2,18 @@ name: CI
 
 on:
   push:
+    # Tags are handled by the release workflow, which calls this one.
+    branches: ["**"]
   pull_request:
+  # Manual start runs the test build as well.
   workflow_dispatch:
+  # Called by release.yml.
+  workflow_call:
+    inputs:
+      test-build:
+        description: Run the full image build
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -110,11 +120,11 @@ jobs:
         run: bash tests/run-tests.sh
 
   # Full image build with a throwaway config, along the same path users take
-  # (config bundle -> action). Takes a while, so it only runs on demand.
-  # The image is not uploaded.
+  # (config bundle -> action). Takes a while, so it only runs for releases and
+  # on manual start. The image is not uploaded.
   build:
     name: Test build
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || inputs.test-build
     needs: [shellcheck, actionlint, hadolint, tests]
     runs-on: ubuntu-latest
     timeout-minutes: 120
