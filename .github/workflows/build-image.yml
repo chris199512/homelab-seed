@@ -41,7 +41,7 @@ jobs:
           echo "::error::This repository is public. Run this workflow only in a private copy (see README)."
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Restore configuration
         env:

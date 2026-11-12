@@ -20,27 +20,39 @@ SKIPPED=0
 # A test exits with this code if a tool it needs is missing.
 export SKIP=77
 
+# Code run before every test.
+PRELUDE="set -Eeuo pipefail"
 # Git Bash on Windows cannot set permissions on NTFS; that is not what we test.
-PRELUDE=""
 if [[ $(uname -s) == MINGW* || $(uname -s) == MSYS* ]]; then
-    PRELUDE='install() { command install "$@" 2>/dev/null || true; }; chmod() { :; }'
+    PRELUDE+=$'\n''install() { command install "$@" 2>/dev/null || true; }; chmod() { :; }'
 fi
-export PRELUDE
+
+# GitHub Actions annotation, so failures show up on the run and in pull requests.
+annotate() { # <title> <message>
+    local message=$2
+    [[ -n ${GITHUB_ACTIONS:-} ]] || return 0
+    message=${message//'%'/'%25'}
+    message=${message//$'\r'/'%0D'}
+    message=${message//$'\n'/'%0A'}
+    printf '::error file=tests/run-tests.sh,title=%s::%s\n' "$1" "$message"
+}
 
 # check <name> <bash code>: runs the code in a fresh bash; non-zero exit = failure.
 check() {
     local name=$1 code=$2 output rc=0
-    output=$(cd "$TMP" && bash -c "set -Eeuo pipefail; $PRELUDE; $code" 2>&1) || rc=$?
+    output=$(cd "$TMP" && bash -c "$PRELUDE"$'\n'"$code" 2>&1) || rc=$?
     if ((rc == 0)); then
         PASSED=$((PASSED + 1))
         printf '  \033[32mok\033[0m    %s\n' "$name"
     elif ((rc == SKIP)); then
         SKIPPED=$((SKIPPED + 1))
         printf '  \033[33mskip\033[0m  %s (%s)\n' "$name" "$output"
+        annotate "Skipped: $name" "$output"
     else
         FAILED=$((FAILED + 1))
         printf '  \033[31mFAIL\033[0m  %s\n' "$name"
         printf '%s\n' "$output" | sed 's/^/        /'
+        annotate "Test failed: $name" "$output"
     fi
 }
 

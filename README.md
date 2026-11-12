@@ -289,7 +289,7 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Provide config.env and the files it references, e.g. decrypt them from
       # your repository or unpack a bundle from a secret:

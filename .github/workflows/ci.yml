@@ -22,20 +22,26 @@ jobs:
     name: ShellCheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run ShellCheck
         run: |
           mapfile -t files < <(git ls-files | xargs grep -lE '^#!/(usr/)?bin/(env )?(ba)?sh|^# shellcheck shell=bash')
           printf '%s\n' "${files[@]}"
           shellcheck --version
-          shellcheck --external-sources "${files[@]}"
+          rc=0
+          shellcheck --external-sources --format=gcc "${files[@]}" >"$RUNNER_TEMP/shellcheck.txt" || rc=$?
+          cat "$RUNNER_TEMP/shellcheck.txt"
+          # One annotation per finding, shown on the run and in pull requests.
+          sed -E 's/^([^:]+):([0-9]+):([0-9]+): ([a-z]+): (.*)$/::error file=\1,line=\2,col=\3::\5/' \
+            "$RUNNER_TEMP/shellcheck.txt"
+          exit "$rc"
 
   actionlint:
     name: Workflows (actionlint)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install actionlint
         run: |
@@ -55,7 +61,7 @@ jobs:
     name: Dockerfile (hadolint)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run hadolint
         run: |
@@ -67,7 +73,7 @@ jobs:
     name: PowerShell (PSScriptAnalyzer)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run PSScriptAnalyzer
         shell: pwsh
@@ -75,13 +81,16 @@ jobs:
           Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSCRIPTANALYZER_VERSION -Scope CurrentUser -Force
           $results = Invoke-ScriptAnalyzer -Path ./build.ps1 -Settings ./PSScriptAnalyzerSettings.psd1
           $results | Format-Table -AutoSize -Wrap
+          foreach ($r in $results) {
+            Write-Output "::error file=build.ps1,line=$($r.Line),col=$($r.Column)::$($r.RuleName): $($r.Message)"
+          }
           if ($results) { exit 1 }
 
   windows-powershell:
     name: Windows PowerShell 5.1 syntax
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Parse build.ps1
         shell: powershell
@@ -95,7 +104,7 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run tests
         run: bash tests/run-tests.sh
@@ -110,7 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Create test configuration
         run: |
