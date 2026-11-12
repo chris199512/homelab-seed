@@ -202,7 +202,9 @@ check "bootstrap rejects the example repository URL" '
 
 check "values with special characters survive write_env" '
     . "$HELPERS"; load_builder
-    ADMIN_PASSWORD='\''p@ss "w$rd'\''\'\'''\''x!{<%]'\''
+    # p@ss "w$rd'\''x!{<%]  (\047 is a single quote)
+    ADMIN_PASSWORD=$(printf "%s\047%s" "p@ss \"w\$rd" "x!{<%]")
+    assert_eq "${#ADMIN_PASSWORD}" "17"
     write_env "$PWD/out.env" ADMIN_PASSWORD
     expected=$ADMIN_PASSWORD; unset ADMIN_PASSWORD
     . "$PWD/out.env"
