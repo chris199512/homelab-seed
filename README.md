@@ -9,6 +9,9 @@ SD card, the Pi reboots into it and sets itself up – updates, Docker,
 reverse proxy with HTTPS, and your own Ansible project that takes over from
 there. Every part can be switched on or off.
 
+📖 **Step-by-step guides, examples and troubleshooting in the
+[Wiki](https://github.com/chris199512/homelab-seed/wiki) – English and Deutsch.**
+
 ```
  build.sh ──▶ USB stick ──boot──▶ installer writes + verifies SD card ──reboot──▶
  SD card: first-boot setup ──▶ Docker ─▶ Semaphore ─▶ (nginx + TLS) ─▶ your bootstrap playbook
