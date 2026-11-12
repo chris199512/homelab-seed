@@ -22,7 +22,7 @@ run_hook() {
         # shellcheck source=/dev/null
         . "$SEED_ETC/config.env"
         set +a
-        cd /root
+        cd /root || exit 1
         exec bash "$1"
     )
 }

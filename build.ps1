@@ -3,7 +3,7 @@
     Builds the homelab-seed installer image on Windows.
 
 .DESCRIPTION
-    Needs only Docker Desktop (Linux containers) – no WSL shell, no Git Bash.
+    Needs only Docker Desktop (Linux containers) - no WSL shell, no Git Bash.
     The build itself runs in a privileged Linux container, exactly as with build.sh.
     Files referenced in the configuration must be inside the directory of the
     configuration file.
@@ -50,11 +50,11 @@ if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Stop-Build 'Docker Desktop is required: https://docs.docker.com/desktop/setup/install/windows-install/'
 }
-docker info --format '{{.OSType}}' 2>$null | Out-Null
+$osType = docker info --format '{{.OSType}}' 2>$null
 if ($LASTEXITCODE -ne 0) {
     Stop-Build 'Docker is not running. Start Docker Desktop and try again.'
 }
-if ((docker info --format '{{.OSType}}' 2>$null) -ne 'linux') {
+if ($osType -ne 'linux') {
     Stop-Build 'Docker Desktop must use Linux containers (right-click the tray icon: "Switch to Linux containers").'
 }
 

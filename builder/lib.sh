@@ -53,6 +53,7 @@ attach_loop() {
 }
 
 # part_geometry <image> <partition-number>: sets PART_OFFSET and PART_SIZE (bytes)
+# shellcheck disable=SC2034 # results for the caller
 part_geometry() {
     local json sector index=$(($2 - 1))
     json=$(sfdisk --json "$1")

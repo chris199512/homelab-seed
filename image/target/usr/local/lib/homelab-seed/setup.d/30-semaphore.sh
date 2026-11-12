@@ -37,6 +37,7 @@ step_runtime_config() {
             if [[ -n $SMTP_HOST ]]; then
                 echo "SEMAPHORE_EMAIL_ALERT=True"
                 echo "SEMAPHORE_EMAIL_HOST=$SMTP_HOST"
+                # shellcheck disable=SC2153 # set in config.env
                 echo "SEMAPHORE_EMAIL_PORT=$SMTP_PORT"
                 echo "SEMAPHORE_EMAIL_SENDER=$SMTP_SENDER"
                 echo "SEMAPHORE_EMAIL_USERNAME=$SMTP_USER"

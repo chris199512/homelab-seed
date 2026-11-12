@@ -33,7 +33,7 @@ BUNDLE_MARKER=.homelab-seed-bundle
 # Copies config.env and every file it references into $STAGE, stripping
 # Windows line endings. Referenced paths are relative to the config directory.
 stage_config() {
-    local config=$CONFIG_DIR/${SEED_CONFIG_NAME:-config.env} hooks hook
+    local config=$CONFIG_DIR/${SEED_CONFIG_NAME:-config.env} hooks hook target
     [[ -f $config ]] || die "Config file ${SEED_CONFIG_NAME:-config.env} not found"
     rm -rf "$STAGE"
     install -d -m 700 "$STAGE" "$FILES"
@@ -58,7 +58,8 @@ stage_config() {
         install -d -m 700 "$STAGE/hooks"
         for hook in "$hooks"/*.sh; do
             [[ -f $hook ]] || continue
-            tr -d '\r' <"$hook" >"$STAGE/hooks/$(basename "$hook")"
+            target=$STAGE/hooks/${hook##*/}
+            tr -d '\r' <"$hook" >"$target"
         done
     fi
 }
@@ -209,14 +210,19 @@ build_target() {
     apply_overlay "$SRC/image/target"
 
     install -d -m 700 "$etc" "$etc/files"
-    # File settings point to their location inside the installed system.
+    # File settings point to their location inside the installed system. The
+    # subshell keeps the build-side values for the install commands below.
     (
+        # shellcheck disable=SC2030
         [[ -z $BOOTSTRAP_SSH_PRIVATE_KEY_FILE ]] || BOOTSTRAP_SSH_PRIVATE_KEY_FILE=/etc/homelab-seed/files/ssh_key
+        # shellcheck disable=SC2030
         [[ -z $BOOTSTRAP_SECRETS_FILE ]] || BOOTSTRAP_SECRETS_FILE=/etc/homelab-seed/files/secrets.env
         mapfile -t keys < <(runtime_keys)
         write_env "$etc/config.env" "${keys[@]}"
     )
+    # shellcheck disable=SC2031
     [[ -z $BOOTSTRAP_SSH_PRIVATE_KEY_FILE ]] || install -m 600 "$FILES/ssh_key" "$etc/files/ssh_key"
+    # shellcheck disable=SC2031
     [[ -z $BOOTSTRAP_SECRETS_FILE ]] || install -m 600 "$FILES/secrets.env" "$etc/files/secrets.env"
     if [[ -n $HOOKS_DIR ]]; then
         install -d -m 700 "$etc/hooks"
