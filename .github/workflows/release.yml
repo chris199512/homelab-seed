@@ -1,13 +1,20 @@
-# Runs for every published release (tag vMAJOR.MINOR.PATCH):
-#   1. the complete CI including the full image build
-#   2. if that succeeds, moves the major tag (e.g. v1) to this release, so
-#      `uses: chris199512/homelab-seed@v1` gets the newest working version.
-# Pre-releases are tested but do not move the major tag.
+# Releases are made by pushing a version tag:
+#
+#   git tag -s v1.2.3 -m "v1.2.3" && git push origin v1.2.3
+#
+# (Creating a release in the GitHub UI works too – it pushes the tag.)
+#
+#   1. runs the complete CI including the full image build
+#   2. only if that succeeds: creates the GitHub release with generated notes
+#   3. moves the major tag (e.g. v1) to it, so
+#      `uses: chris199512/homelab-seed@v1` only gets tested versions
+#
+# Tags with a suffix (v1.2.3-rc.1) become pre-releases and do not move v1.
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
 
 permissions:
   contents: read
@@ -18,17 +25,23 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       major: ${{ steps.tag.outputs.major }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
-      - name: Tag must look like v1.2.3
+      - name: Tag must look like v1.2.3 or v1.2.3-rc.1
         id: tag
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.ref_name }}
         run: |
           if [[ ! $TAG =~ ^v([0-9]+)\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Release tags must look like v1.2.3 or v1.2.3-rc.1 (got '$TAG')"
             exit 1
           fi
           echo "major=v${BASH_REMATCH[1]}" >>"$GITHUB_OUTPUT"
+          if [[ -n ${BASH_REMATCH[2]} ]]; then
+            echo "prerelease=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >>"$GITHUB_OUTPUT"
+          fi
 
   ci:
     name: CI
@@ -37,20 +50,34 @@ jobs:
     with:
       test-build: true
 
-  major-tag:
-    name: Move ${{ needs.check-tag.outputs.major }} tag
+  publish:
+    name: Publish release
     needs: [check-tag, ci]
-    if: ${{ !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
 
-      - name: Point ${{ needs.check-tag.outputs.major }} to ${{ github.event.release.tag_name }}
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.check-tag.outputs.prerelease }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists (created in the UI)"
+            exit 0
+          fi
+          args=(--title "$TAG" --generate-notes --verify-tag)
+          if [[ $PRERELEASE == true ]]; then args+=(--prerelease); fi
+          gh release create "$TAG" "${args[@]}"
+
+      - name: Move ${{ needs.check-tag.outputs.major }} to ${{ github.ref_name }}
+        if: needs.check-tag.outputs.prerelease == 'false'
         env:
           MAJOR: ${{ needs.check-tag.outputs.major }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.ref_name }}
         run: |
           git tag --force "$MAJOR" "$GITHUB_SHA"
           git push --force origin "refs/tags/$MAJOR"

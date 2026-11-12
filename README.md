@@ -391,16 +391,25 @@ builder's base image up to date.
 ### Releases
 
 Versions follow [Semantic Versioning](https://semver.org) with tags like
-`v1.2.3`. To release, create a GitHub release with a new tag (*Releases →
-Draft a new release*, "Generate release notes" fills in the changes). The
+`v1.2.3`. To release, push a version tag:
+
+```bash
+git tag -s v1.2.3 -m "v1.2.3"
+git push origin v1.2.3
+```
+
+(Creating a release with a new tag in the GitHub UI works as well.) The
 release workflow then
 
-1. runs the complete CI including the full image build, and
-2. if that succeeds, moves the major tag (`v1`) to the new release.
+1. runs the complete CI including the full image build,
+2. only if that succeeds, creates the GitHub release with generated release
+   notes, and
+3. moves the major tag (`v1`) to the new release.
 
-Users of `chris199512/homelab-seed@v1` therefore only get releases whose build
-succeeded. Mark a release as *pre-release* (e.g. `v1.3.0-rc.1`) to test it
-without moving `v1`. A breaking change gets a new major version (`v2`).
+A failed build produces no release, and users of
+`chris199512/homelab-seed@v1` only ever get versions whose build succeeded.
+Tags with a suffix such as `v1.3.0-rc.1` become pre-releases and don't move
+`v1`. A breaking change gets a new major version (`v2`).
 
 Locally, run `bash tests/run-tests.sh` and `shellcheck --external-sources`
 from the repository root. Optionally install the
