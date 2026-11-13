@@ -26,6 +26,61 @@ config_keys() {
     sed -nE 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' "$CONFIG_EXAMPLE"
 }
 
+# certbot DNS plugins whose credentials file holds a single API token, and the
+# name of that setting. ACME_DNS_API_TOKEN is written into it.
+acme_token_key() {
+    case $1 in
+        cloudflare) echo dns_cloudflare_api_token ;;
+        digitalocean) echo dns_digitalocean_token ;;
+        dnsimple) echo dns_dnsimple_token ;;
+        linode) echo dns_linode_key ;;
+        *) return 1 ;;
+    esac
+}
+
+# expand_refs <value> <authorized-keys-file>: sets EXPANDED to the value with
+# ${NAME} replaced by the setting NAME and ${ADMIN_SSH_KEYS} by all public keys
+# joined by ";". Unknown references are added to UNKNOWN_REFS and kept as is.
+# (Sets variables instead of printing: it must not run in a subshell.)
+UNKNOWN_REFS=()
+EXPANDED=""
+expand_refs() {
+    local rest=$1 keys_file=$2 out="" name known
+    known=" $(config_keys | tr '\n' ' ') ADMIN_SSH_KEYS "
+    while [[ $rest == *'${'* ]]; do
+        out+=${rest%%'${'*}
+        rest=${rest#*'${'}
+        name=${rest%%\}*}
+        if [[ $rest != *\}* || ! $name =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+            out+='${'
+            continue
+        fi
+        rest=${rest#*\}}
+        if [[ $known != *" $name "* ]]; then
+            UNKNOWN_REFS+=("$name")
+            out+="\${$name}"
+        elif [[ $name == ADMIN_SSH_KEYS ]]; then
+            out+=$(grep -E '^(ssh-|ecdsa-|sk-)' "$keys_file" | paste -sd ';' -)
+        else
+            out+=${!name}
+        fi
+    done
+    EXPANDED=$out$rest
+}
+
+# expand_secrets_file <in> <out> <authorized-keys-file>
+expand_secrets_file() {
+    local line
+    while IFS= read -r line || [[ -n $line ]]; do
+        if [[ $line =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            expand_refs "${line#*=}" "$3"
+            printf '%s=%s\n' "${line%%=*}" "$EXPANDED"
+        else
+            printf '%s\n' "$line"
+        fi
+    done <"$1" >"$2"
+}
+
 is_true() { [[ ${1,,} =~ ^(true|yes|on|1)$ ]]; }
 is_bool() { [[ ${1,,} =~ ^(true|yes|on|1|false|no|off|0)$ ]]; }
 
@@ -155,11 +210,20 @@ validate_config() {
     fi
     if [[ $TLS_MODE == letsencrypt-dns ]]; then
         matches ACME_DNS_PROPAGATION_SECONDS '^[0-9]+$' "expected a number of seconds"
-        case $ACME_DNS_PROVIDER in
-            cloudflare) required CLOUDFLARE_API_TOKEN ;;
-            mittwald) required MITTWALD_API_TOKEN MITTWALD_DOMAIN ;;
-            *) err "ACME_DNS_PROVIDER='$ACME_DNS_PROVIDER' is not supported (use cloudflare or mittwald)" ;;
-        esac
+        matches ACME_DNS_PROVIDER '^[a-z0-9]+$' "expected the name of a certbot DNS plugin, e.g. cloudflare"
+        if [[ $ACME_DNS_PROVIDER == mittwald ]]; then
+            required ACME_DNS_API_TOKEN
+        elif [[ $ACME_DNS_PROVIDER == route53 ]]; then
+            err "ACME_DNS_PROVIDER=route53 is not supported (it reads AWS credentials, not a credentials file)"
+        elif [[ -z $ACME_DNS_CREDENTIALS_FILE ]]; then
+            if ! acme_token_key "$ACME_DNS_PROVIDER" >/dev/null; then
+                err "ACME_DNS_PROVIDER=$ACME_DNS_PROVIDER needs ACME_DNS_CREDENTIALS_FILE (ACME_DNS_API_TOKEN only works for cloudflare, digitalocean, dnsimple, linode, mittwald)"
+            else
+                required ACME_DNS_API_TOKEN
+            fi
+        elif ! grep -q '=' "$files/dns-credentials" 2>/dev/null; then
+            err "ACME_DNS_CREDENTIALS_FILE contains no 'key = value' settings"
+        fi
     fi
 
     # Bootstrap
@@ -184,6 +248,11 @@ validate_config() {
                 [[ -z ${line//[[:space:]]/} || $line =~ ^[[:space:]]*# ]] && continue
                 [[ $line =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || err "BOOTSTRAP_SECRETS_FILE line $n is not KEY=VALUE"
             done <"$files/secrets.env"
+            UNKNOWN_REFS=()
+            expand_secrets_file "$files/secrets.env" /dev/null "$files/authorized_keys"
+            if ((${#UNKNOWN_REFS[@]})); then
+                err "BOOTSTRAP_SECRETS_FILE references unknown settings: $(printf '${%s} ' "${UNKNOWN_REFS[@]}")"
+            fi
         fi
     fi
 

@@ -51,6 +51,7 @@ stage_config() {
     stage_file ADMIN_AUTHORIZED_KEYS_FILE authorized_keys
     stage_file BOOTSTRAP_SSH_PRIVATE_KEY_FILE ssh_key
     stage_file BOOTSTRAP_SECRETS_FILE secrets.env
+    stage_file ACME_DNS_CREDENTIALS_FILE dns-credentials
 
     if [[ -n $HOOKS_DIR ]]; then
         hooks=$(config_path HOOKS_DIR "$HOOKS_DIR") || exit 1
@@ -210,6 +211,12 @@ build_target() {
     apply_overlay "$SRC/image/target"
 
     install -d -m 700 "$etc" "$etc/files"
+    # Token-only DNS providers: generate the certbot credentials file, so the
+    # Pi handles every certbot DNS plugin the same way.
+    if [[ $TLS_MODE == letsencrypt-dns && $ACME_DNS_PROVIDER != mittwald && -z $ACME_DNS_CREDENTIALS_FILE ]]; then
+        (umask 077 && printf '%s = %s\n' "$(acme_token_key "$ACME_DNS_PROVIDER")" "$ACME_DNS_API_TOKEN" >"$FILES/dns-credentials")
+        ACME_DNS_CREDENTIALS_FILE=generated
+    fi
     # File settings point to their location inside the installed system. The
     # subshell keeps the build-side values for the install commands below.
     (
@@ -217,13 +224,21 @@ build_target() {
         [[ -z $BOOTSTRAP_SSH_PRIVATE_KEY_FILE ]] || BOOTSTRAP_SSH_PRIVATE_KEY_FILE=/etc/homelab-seed/files/ssh_key
         # shellcheck disable=SC2030
         [[ -z $BOOTSTRAP_SECRETS_FILE ]] || BOOTSTRAP_SECRETS_FILE=/etc/homelab-seed/files/secrets.env
+        # shellcheck disable=SC2030
+        [[ -z $ACME_DNS_CREDENTIALS_FILE ]] || ACME_DNS_CREDENTIALS_FILE=/etc/homelab-seed/files/dns-credentials
         mapfile -t keys < <(runtime_keys)
         write_env "$etc/config.env" "${keys[@]}"
     )
     # shellcheck disable=SC2031
     [[ -z $BOOTSTRAP_SSH_PRIVATE_KEY_FILE ]] || install -m 600 "$FILES/ssh_key" "$etc/files/ssh_key"
     # shellcheck disable=SC2031
-    [[ -z $BOOTSTRAP_SECRETS_FILE ]] || install -m 600 "$FILES/secrets.env" "$etc/files/secrets.env"
+    [[ -z $ACME_DNS_CREDENTIALS_FILE ]] || install -m 600 "$FILES/dns-credentials" "$etc/files/dns-credentials"
+    # ${NAME} references are resolved here; the Pi gets the final values.
+    # shellcheck disable=SC2031
+    if [[ -n $BOOTSTRAP_SECRETS_FILE ]]; then
+        expand_secrets_file "$FILES/secrets.env" "$etc/files/secrets.env" "$FILES/authorized_keys"
+        chmod 600 "$etc/files/secrets.env"
+    fi
     if [[ -n $HOOKS_DIR ]]; then
         install -d -m 700 "$etc/hooks"
         install -m 700 "$STAGE"/hooks/*.sh "$etc/hooks/"

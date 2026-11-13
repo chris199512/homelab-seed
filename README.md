@@ -187,15 +187,34 @@ HTTPS and redirects HTTP. Let's Encrypt certificates are renewed by certbot's
 systemd timer and nginx is reloaded afterwards. Set `ACME_STAGING="true"`
 while testing to avoid Let's Encrypt rate limits.
 
-DNS providers for `letsencrypt-dns`:
+DNS providers for `letsencrypt-dns` (`ACME_DNS_PROVIDER`):
 
-- **cloudflare** – `CLOUDFLARE_API_TOKEN` with permission *Zone:DNS:Edit*
-- **mittwald** – `MITTWALD_API_TOKEN` and `MITTWALD_DOMAIN`; create a DNS zone
-  `_acme-challenge.<SEMAPHORE_FQDN>` in mStudio beforehand
+| Provider | Credentials |
+| --- | --- |
+| any [certbot DNS plugin](https://eff-certbot.readthedocs.io/en/stable/using.html#dns-plugins) – e.g. `ovh`, `rfc2136`, `google`, `gehirn`, `luadns`, `nsone`, `sakuracloud`, `dnsmadeeasy` | `ACME_DNS_CREDENTIALS_FILE` in the plugin's format |
+| `cloudflare`, `digitalocean`, `dnsimple`, `linode` | `ACME_DNS_API_TOKEN` is enough (or a credentials file) |
+| `mittwald` (built in) | `ACME_DNS_API_TOKEN`; create a DNS zone `_acme-challenge.<SEMAPHORE_FQDN>` in mStudio |
 
-Further providers can be added as a file in
+The plugin's Debian package `python3-certbot-dns-<provider>` is installed
+automatically. Providers without a certbot plugin can be added as a file in
 `image/target/usr/local/lib/homelab-seed/dns/<name>.sh` implementing
 `dns_set_txt <fqdn> <value>` and `dns_clear_txt <fqdn>`. Pull requests are welcome.
+
+### One value, one place
+
+Settings in `config.env` can reuse earlier ones
+(`BOOTSTRAP_BECOME_PASSWORD="$ADMIN_PASSWORD"`), and the secrets file for
+Semaphore can insert settings with `${NAME}`:
+
+```
+MITTWALD_TOKEN=${ACME_DNS_API_TOKEN}
+LINUX_ROOT_PASSWORD=${ADMIN_PASSWORD}
+CLOUD_VM_SSH_PUBLIC_KEY=${ADMIN_SSH_KEYS}
+```
+
+`${ADMIN_SSH_KEYS}` stands for all keys of `ADMIN_AUTHORIZED_KEYS_FILE`,
+separated by `;`. References are resolved at build time; unknown names are
+reported by the validation.
 
 ### Firewall
 

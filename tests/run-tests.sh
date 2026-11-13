@@ -154,12 +154,53 @@ check "TLS requires the proxy, Let's Encrypt requires FQDN and e-mail" '
     assert_contains "$out" "SEMAPHORE_FQDN must be set"
     assert_contains "$out" "ACME_EMAIL must be set"'
 
-check "DNS provider credentials are required" '
+check "DNS providers: token, credentials file or not supported" '
     . "$HELPERS"; load_builder
-    out=$(invalid PROXY_ENABLED=true TLS_MODE=letsencrypt-dns SEMAPHORE_FQDN=s.example.org ACME_EMAIL=a@example.org ACME_DNS_PROVIDER=mittwald)
-    assert_contains "$out" "MITTWALD_API_TOKEN must be set"
-    out=$(invalid PROXY_ENABLED=true TLS_MODE=letsencrypt-dns SEMAPHORE_FQDN=s.example.org ACME_EMAIL=a@example.org ACME_DNS_PROVIDER=route53)
-    assert_contains "$out" "not supported"'
+    le="PROXY_ENABLED=true TLS_MODE=letsencrypt-dns SEMAPHORE_FQDN=s.example.org ACME_EMAIL=a@example.org"
+    out=$(invalid $le ACME_DNS_PROVIDER=mittwald)
+    assert_contains "$out" "ACME_DNS_API_TOKEN must be set"
+    validate $le ACME_DNS_PROVIDER=mittwald ACME_DNS_API_TOKEN=t >/dev/null
+    validate $le ACME_DNS_PROVIDER=digitalocean ACME_DNS_API_TOKEN=t >/dev/null
+    out=$(invalid $le ACME_DNS_PROVIDER=ovh ACME_DNS_API_TOKEN=t)
+    assert_contains "$out" "needs ACME_DNS_CREDENTIALS_FILE"
+    out=$(invalid $le ACME_DNS_PROVIDER=route53)
+    assert_contains "$out" "not supported"
+    out=$(invalid $le ACME_DNS_PROVIDER=Cloud-Flare)
+    assert_contains "$out" "certbot DNS plugin"'
+
+check "DNS credentials file is staged; token providers get one generated" '
+    . "$HELPERS"; load_builder
+    le="PROXY_ENABLED=true TLS_MODE=letsencrypt-dns SEMAPHORE_FQDN=s.example.org ACME_EMAIL=a@example.org"
+    new_config $le ACME_DNS_PROVIDER=ovh ACME_DNS_CREDENTIALS_FILE=./secrets/ovh.ini
+    printf "dns_ovh_endpoint = ovh-eu\r\n" >"$CONFIG_DIR/secrets/ovh.ini"
+    stage_config 2>/dev/null; validate_config "$STAGE"
+    assert_eq "$(cat "$FILES/dns-credentials")" "dns_ovh_endpoint = ovh-eu"
+    assert_eq "$(acme_token_key cloudflare)" "dns_cloudflare_api_token"
+    assert_eq "$(acme_token_key linode)" "dns_linode_key"
+    ! acme_token_key ovh'
+
+check "secrets file: \${NAME} references are expanded" '
+    . "$HELPERS"; load_builder
+    new_config "ACME_DNS_API_TOKEN=tok-123" "ADMIN_PASSWORD='\''p\$w \"x'\''"
+    stage_config 2>/dev/null
+    printf "ssh-ed25519 AAA one\nssh-rsa BBB two\n" >"$FILES/authorized_keys"
+    printf "A=\${ACME_DNS_API_TOKEN}\nB=pre-\${ADMIN_PASSWORD}-post\nC=\${ADMIN_SSH_KEYS}\nD=literal \$x \${lower} \${\n# \${ADMIN_PASSWORD} in a comment\n" >in.env
+    UNKNOWN_REFS=()
+    expand_secrets_file in.env out.env "$FILES/authorized_keys"
+    assert_eq "$(sed -n 1p out.env)" "A=tok-123"
+    assert_eq "$(sed -n 2p out.env)" "B=pre-p\$w \"x-post"
+    assert_eq "$(sed -n 3p out.env)" "C=ssh-ed25519 AAA one;ssh-rsa BBB two"
+    assert_eq "$(sed -n 4p out.env)" "D=literal \$x \${lower} \${"
+    assert_eq "$(sed -n 5p out.env)" "# \${ADMIN_PASSWORD} in a comment"
+    assert_eq "${#UNKNOWN_REFS[@]}" "0"'
+
+check "secrets file: unknown references are reported" '
+    . "$HELPERS"; load_builder
+    new_config BOOTSTRAP_ENABLED=true BOOTSTRAP_REPO_URL=https://example.org/r.git BOOTSTRAP_SECRETS_FILE=./secrets/s.env
+    printf "X=\${NOT_A_SETTING}\nY=\${ADMIN_PASSWORD}\n" >"$CONFIG_DIR/secrets/s.env"
+    out=$( (stage_config && validate_config "$STAGE") 2>&1 ) && exit 1
+    assert_contains "$out" "unknown settings: \${NOT_A_SETTING}"
+    assert_not_contains "$out" "\${ADMIN_PASSWORD}"'
 
 check "SEMAPHORE_WEB_HOST is derived from the proxy settings" '
     . "$HELPERS"; load_builder
@@ -298,6 +339,16 @@ check "Semaphore secrets keep quotes, backslashes and = in values" '
     assert_eq "$(jq -r ".[2].secret" <<<"$json")" "say \"hi\" \\ there"
     assert_eq "$(jq -r ".[3].name" <<<"$json")" "LAST"
     assert_eq "$(jq length <<<"$json")" "4"'
+
+check "mittwald: the longest matching domain wins" '
+    command -v jq >/dev/null || { echo "jq missing"; exit $SKIP; }
+    . "$HELPERS"; load_target
+    . "$REPO/image/target/usr/local/lib/homelab-seed/dns/mittwald.sh"
+    domains='\''[{"domain":"example.org","projectId":"p1"},{"domain":"lab.example.org","projectId":"p2"},{"domain":"other.org","projectId":"p3"}]'\''
+    assert_eq "$(mittwald_project_for semaphore.lab.example.org "$domains")" "p2"
+    assert_eq "$(mittwald_project_for semaphore.example.org "$domains")" "p1"
+    assert_eq "$(mittwald_project_for example.org "$domains")" "p1"
+    assert_eq "$(mittwald_project_for notexample.org "$domains")" ""'
 
 check "hooks run once each, with the settings in the environment" '
     . "$HELPERS"; load_target

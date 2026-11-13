@@ -24,31 +24,34 @@ certbot_challenge_args() {
         CERTBOT_ARGS=(--webroot -w "$ACME_WEBROOT")
         return
     fi
-    case $ACME_DNS_PROVIDER in
-        cloudflare)
-            retry 3 30 apt_get install --no-install-recommends python3-certbot-dns-cloudflare
-            (
-                umask 077
-                printf 'dns_cloudflare_api_token = %s\n' "$CLOUDFLARE_API_TOKEN" >"$SEED_ETC/cloudflare.ini"
-            )
-            CERTBOT_ARGS=(--dns-cloudflare --dns-cloudflare-credentials "$SEED_ETC/cloudflare.ini"
-                --dns-cloudflare-propagation-seconds "$ACME_DNS_PROPAGATION_SECONDS")
-            ;;
-        mittwald)
-            (
-                umask 077
-                {
-                    printf 'ACME_DNS_PROVIDER=%q\n' "$ACME_DNS_PROVIDER"
-                    printf 'ACME_DNS_PROPAGATION_SECONDS=%q\n' "$ACME_DNS_PROPAGATION_SECONDS"
-                    printf 'MITTWALD_API_TOKEN=%q\n' "$MITTWALD_API_TOKEN"
-                    printf 'MITTWALD_DOMAIN=%q\n' "$MITTWALD_DOMAIN"
-                } >"$SEED_ETC/dns.env"
-            )
-            CERTBOT_ARGS=(--manual --preferred-challenges dns
-                --manual-auth-hook "$hook auth" --manual-cleanup-hook "$hook cleanup")
-            ;;
-        *) die "Unsupported ACME_DNS_PROVIDER '$ACME_DNS_PROVIDER'" ;;
-    esac
+    local provider=$ACME_DNS_PROVIDER package credentials=$SEED_ETC/dns-credentials.ini
+
+    # Built-in provider without a certbot plugin: manual hooks.
+    if [[ $provider == mittwald ]]; then
+        (
+            umask 077
+            {
+                printf 'ACME_DNS_PROVIDER=%q\n' "$provider"
+                printf 'ACME_DNS_PROPAGATION_SECONDS=%q\n' "$ACME_DNS_PROPAGATION_SECONDS"
+                printf 'MITTWALD_API_TOKEN=%q\n' "$ACME_DNS_API_TOKEN"
+            } >"$SEED_ETC/dns.env"
+        )
+        CERTBOT_ARGS=(--manual --preferred-challenges dns
+            --manual-auth-hook "$hook auth" --manual-cleanup-hook "$hook cleanup")
+        return
+    fi
+
+    # Any certbot DNS plugin: python3-certbot-dns-<provider> with a credentials
+    # file (generated at build time for token-only providers). The file stays,
+    # certbot needs it for the renewals.
+    package=python3-certbot-dns-$provider
+    apt-cache show "$package" >/dev/null 2>&1 ||
+        die "There is no certbot DNS plugin '$provider' (package $package) – check ACME_DNS_PROVIDER"
+    retry 3 30 apt_get install --no-install-recommends "$package"
+    install -m 600 "$ACME_DNS_CREDENTIALS_FILE" "$credentials"
+    CERTBOT_ARGS=(--authenticator "dns-$provider"
+        "--dns-$provider-credentials" "$credentials"
+        "--dns-$provider-propagation-seconds" "$ACME_DNS_PROPAGATION_SECONDS")
 }
 
 letsencrypt_certificate() {
