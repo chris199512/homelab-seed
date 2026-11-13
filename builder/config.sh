@@ -44,6 +44,7 @@ acme_token_key() {
 # (Sets variables instead of printing: it must not run in a subshell.)
 UNKNOWN_REFS=()
 EXPANDED=""
+# shellcheck disable=SC2016 # '${' is the literal text being searched for
 expand_refs() {
     local rest=$1 keys_file=$2 out="" name known
     known=" $(config_keys | tr '\n' ' ') ADMIN_SSH_KEYS "
@@ -251,6 +252,7 @@ validate_config() {
             UNKNOWN_REFS=()
             expand_secrets_file "$files/secrets.env" /dev/null "$files/authorized_keys"
             if ((${#UNKNOWN_REFS[@]})); then
+                # shellcheck disable=SC2016 # prints the literal ${NAME}
                 err "BOOTSTRAP_SECRETS_FILE references unknown settings: $(printf '${%s} ' "${UNKNOWN_REFS[@]}")"
             fi
         fi
