@@ -214,6 +214,9 @@ validate_config() {
         matches ACME_DNS_PROVIDER '^[a-z0-9]+$' "expected the name of a certbot DNS plugin, e.g. cloudflare"
         if [[ $ACME_DNS_PROVIDER == mittwald ]]; then
             required ACME_DNS_API_TOKEN
+            [[ -z $ACME_DNS_MITTWALD_PROJECT ]] ||
+                matches ACME_DNS_MITTWALD_PROJECT '^(p-[a-z0-9]+|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12})$' \
+                    "expected a project short ID (p-xxxxxx) or UUID"
         elif [[ $ACME_DNS_PROVIDER == route53 ]]; then
             err "ACME_DNS_PROVIDER=route53 is not supported (it reads AWS credentials, not a credentials file)"
         elif [[ -z $ACME_DNS_CREDENTIALS_FILE ]]; then

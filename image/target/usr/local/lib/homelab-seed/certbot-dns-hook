@@ -26,5 +26,13 @@ case ${1:-} in
         log "Removing TXT record for _acme-challenge.$CERTBOT_DOMAIN"
         dns_clear_txt "$CERTBOT_DOMAIN"
         ;;
-    *) die "Usage: $0 <auth|cleanup>" ;;
+    check)
+        # Before certbot runs: a failing auth hook would still cost a failed
+        # authorization at Let's Encrypt (5 per hour and domain).
+        if declare -F dns_check >/dev/null; then
+            log "Checking DNS provider access for _acme-challenge.$CERTBOT_DOMAIN"
+            dns_check "$CERTBOT_DOMAIN"
+        fi
+        ;;
+    *) die "Usage: $0 <auth|cleanup|check>" ;;
 esac

@@ -34,8 +34,12 @@ certbot_challenge_args() {
                 printf 'ACME_DNS_PROVIDER=%q\n' "$provider"
                 printf 'ACME_DNS_PROPAGATION_SECONDS=%q\n' "$ACME_DNS_PROPAGATION_SECONDS"
                 printf 'MITTWALD_API_TOKEN=%q\n' "$ACME_DNS_API_TOKEN"
+                printf 'MITTWALD_PROJECT_ID=%q\n' "$ACME_DNS_MITTWALD_PROJECT"
             } >"$SEED_ETC/dns.env"
         )
+        # Fail here, not at Let's Encrypt, when the DNS API is not usable.
+        CERTBOT_DOMAIN=$SEMAPHORE_FQDN "$hook" check ||
+            die "DNS provider check failed – no certificate requested (Let's Encrypt allows only 5 failed attempts per hour)"
         CERTBOT_ARGS=(--manual --preferred-challenges dns
             --manual-auth-hook "$hook auth" --manual-cleanup-hook "$hook cleanup")
         return

@@ -193,7 +193,11 @@ DNS providers for `letsencrypt-dns` (`ACME_DNS_PROVIDER`):
 | --- | --- |
 | any [certbot DNS plugin](https://eff-certbot.readthedocs.io/en/stable/using.html#dns-plugins) – e.g. `ovh`, `rfc2136`, `google`, `gehirn`, `luadns`, `nsone`, `sakuracloud`, `dnsmadeeasy` | `ACME_DNS_CREDENTIALS_FILE` in the plugin's format |
 | `cloudflare`, `digitalocean`, `dnsimple`, `linode` | `ACME_DNS_API_TOKEN` is enough (or a credentials file) |
-| `mittwald` (built in) | `ACME_DNS_API_TOKEN`; create a DNS zone `_acme-challenge.<SEMAPHORE_FQDN>` in mStudio |
+| `mittwald` (built in) | `ACME_DNS_API_TOKEN`; create a DNS zone `_acme-challenge.<SEMAPHORE_FQDN>` in mStudio. Optional `ACME_DNS_MITTWALD_PROJECT` (e.g. `p-abc123`) uses that project directly instead of searching all domains |
+
+Before certbot starts, the setup checks that the DNS API works and the
+challenge zone exists. A broken token or missing zone then fails the setup
+right away instead of using up Let's Encrypt's 5 failed attempts per hour.
 
 The plugin's Debian package `python3-certbot-dns-<provider>` is installed
 automatically. Providers without a certbot plugin can be added as a file in

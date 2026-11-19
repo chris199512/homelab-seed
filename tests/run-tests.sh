@@ -160,6 +160,11 @@ check "DNS providers: token, credentials file or not supported" '
     out=$(invalid $le ACME_DNS_PROVIDER=mittwald)
     assert_contains "$out" "ACME_DNS_API_TOKEN must be set"
     validate $le ACME_DNS_PROVIDER=mittwald ACME_DNS_API_TOKEN=t >/dev/null
+    validate $le ACME_DNS_PROVIDER=mittwald ACME_DNS_API_TOKEN=t ACME_DNS_MITTWALD_PROJECT=p-ijk42 >/dev/null
+    validate $le ACME_DNS_PROVIDER=mittwald ACME_DNS_API_TOKEN=t \
+        ACME_DNS_MITTWALD_PROJECT=cdd03b64-d452-4925-90d8-34cfd1cae45a >/dev/null
+    out=$(invalid $le ACME_DNS_PROVIDER=mittwald ACME_DNS_API_TOKEN=t ACME_DNS_MITTWALD_PROJECT=Privat)
+    assert_contains "$out" "expected a project short ID"
     validate $le ACME_DNS_PROVIDER=digitalocean ACME_DNS_API_TOKEN=t >/dev/null
     out=$(invalid $le ACME_DNS_PROVIDER=ovh ACME_DNS_API_TOKEN=t)
     assert_contains "$out" "needs ACME_DNS_CREDENTIALS_FILE"
@@ -349,6 +354,38 @@ check "mittwald: the longest matching domain wins" '
     assert_eq "$(mittwald_project_for semaphore.example.org "$domains")" "p1"
     assert_eq "$(mittwald_project_for example.org "$domains")" "p1"
     assert_eq "$(mittwald_project_for notexample.org "$domains")" ""'
+
+check "mittwald: a configured project skips the domain list" '
+    command -v jq >/dev/null || { echo "jq missing"; exit $SKIP; }
+    . "$HELPERS"; load_target
+    . "$REPO/image/target/usr/local/lib/homelab-seed/dns/mittwald.sh"
+    mittwald_api() {
+        echo "$1 $2" >>calls
+        case $2 in
+            /domains) echo "{\"message\":\"internal error\"}"; return 22 ;;
+            /projects/p-abc123/dns-zones) echo "[{\"domain\":\"_acme-challenge.s.example.org\",\"id\":\"z1\"}]" ;;
+            *) return 22 ;;
+        esac
+    }
+    MITTWALD_PROJECT_ID=p-abc123
+    assert_eq "$(mittwald_challenge_zone s.example.org)" "z1"
+    assert_not_contains "$(cat calls)" "/domains"
+    dns_check s.example.org'
+
+check "mittwald: API errors stop with the error instead of a jq error" '
+    command -v jq >/dev/null || { echo "jq missing"; exit $SKIP; }
+    . "$HELPERS"; load_target
+    . "$REPO/image/target/usr/local/lib/homelab-seed/dns/mittwald.sh"
+    mittwald_api() { echo "{\"message\":\"internal error\"}"; return 22; }
+    MITTWALD_PROJECT_ID=""
+    out=$( (dns_check s.example.org) 2>&1 ) && exit 1
+    assert_contains "$out" "GET /domains failed"
+    assert_contains "$out" "internal error"
+    assert_contains "$out" "ACME_DNS_MITTWALD_PROJECT"
+    assert_not_contains "$out" "jq: error"
+    MITTWALD_PROJECT_ID=p-abc123
+    out=$( (dns_check s.example.org) 2>&1 ) && exit 1
+    assert_contains "$out" "GET /projects/p-abc123/dns-zones failed"'
 
 check "hooks run once each, with the settings in the environment" '
     . "$HELPERS"; load_target
